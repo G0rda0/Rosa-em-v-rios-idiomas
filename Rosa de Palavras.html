@@ -1,0 +1,298 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Rosa de Palavras</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: uma única tela escura, a rosa centralizada ocupando o máximo possível */
+  :root {
+    --bg: #070208;
+    --glow: rgba(160, 10, 50, 0.20);
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 12px;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  #stage {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(ellipse 55% 45% at 50% 38%, var(--glow), transparent 70%);
+  }
+  canvas { display: block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  canvas:focus-visible { outline: 1px solid rgba(255, 80, 110, 0.5); outline-offset: 4px; }
+</style>
+
+<div id="stage">
+  <canvas id="rose" tabindex="0" role="img"
+          aria-label="Uma rosa vermelha formada pela frase eu te amo escrita em vários idiomas"></canvas>
+</div>
+
+<script>
+(() => {
+  // ---------------- Configurações ----------------
+  const W = 1000, H = 1000;                // espaço de desenho "lógico"
+  const VIEW = { x: 150, y: 70, w: 700, h: 925 };   // recorte mostrado na tela
+  const DURATION = 9000;                   // ms para a rosa inteira nascer
+  const ANIM = 650;                        // ms que cada palavra leva para aparecer
+  const LIFT = 34;                         // quanto a palavra sobe enquanto aparece
+  const GAP = 2;
+  const GRID = 4;
+  const FONT = 'Georgia, "Times New Roman", "Noto Serif", serif';
+
+  const LOVE = [
+    "Eu te amo", "I love you", "Te amo", "Je t'aime", "Amour", "Ti amo",
+    "Ich liebe dich", "Liebe", "Nakupenda", "愛してる", "我爱你", "사랑해",
+    "أحبك", "Seni seviyorum", "Kocham cię", "Szeretlek", "Anh yêu em",
+    "Mahal kita", "Jeg elsker dig", "Ik hou van jou", "Rakastan sinua",
+    "Σ' αγαπώ", "Я тебя люблю", "אני אוהב אותך", "मैं तुमसे प्यार करता हूँ",
+    "Te iubesc", "Volim te", "Te quiero", "Miluji tě", "Ljubim te",
+    "รักคุณ", "Mi amas vin", "Saranghae", "LOVE", "AMOR",
+  ];
+  // frases curtas para tapar os buracos entre as palavras maiores
+  const MID = ["Te amo", "Ti amo", "Amour", "AMOR", "LOVE", "Liebe", "사랑해", "我爱你",
+               "Volim te", "Te iubesc", "愛してる", "รักคุณ", "Amo-te", "Szeretlek"];
+  // palavras muito curtas entram em qualquer buraco e dominariam a rosa;
+  // no preenchimento elas ficam de fora (continuam nos destaques)
+  const FILL = LOVE.filter((w) => !["أحبك", "รักคุณ"].includes(w));
+  // o caule é fininho: só cabem palavras bem curtas
+  const STEM = ["LOVE", "AMOR", "Amor", "Liebe", "사랑해", "我爱你", "Te amo", "愛"];
+
+  const C = {
+    back:   ["#630a22", "#740d29", "#821030", "#6b0b25"],
+    outer:  ["#a8123a", "#b8153f", "#c41845", "#ad1040"],
+    inner:  ["#ff6b86", "#ff7d93", "#f75c7a"],
+    center: ["#ffb3c1", "#ffc6d0", "#ffa3b4"],
+    front:  ["#ff1f4b", "#f5153f", "#ff2d55", "#e8133f"],
+    green:  ["#2d6a4f", "#40916c", "#52b788", "#74c69d", "#1b7a4a"],
+  };
+
+  // ---------------- O molde da rosa (estilo 🌹) ----------------
+  // Cada região é um caminho; as de baixo da lista ficam "na frente".
+  const P = (d) => new Path2D(d);
+  const REGIONS = [
+    { kind: "petal", colors: C.back,   path: P("M340 330 C290 200 400 95 500 130 C600 95 710 200 660 330 Z") },
+    { kind: "petal", colors: C.outer,  path: P("M500 578 C380 578 270 512 244 410 C231 355 224 300 192 252 C285 254 360 300 400 365 C430 415 470 490 505 542 Z") },
+    { kind: "petal", colors: C.outer,  path: P("M500 578 C620 578 730 512 756 410 C769 355 776 300 808 252 C715 254 640 300 600 365 C570 415 530 490 495 542 Z") },
+    { kind: "petal", colors: C.inner,  path: P("M383 348 C368 245 440 178 522 194 C482 235 470 292 500 352 C460 337 420 342 383 348 Z") },
+    { kind: "petal", colors: C.inner,  path: P("M522 194 C604 190 642 262 617 352 C580 337 540 340 500 352 C478 292 486 236 522 194 Z") },
+    { kind: "petal", colors: C.center, path: P("M450 262 C468 218 548 212 566 256 C538 290 478 294 450 262 Z") },
+    { kind: "petal", colors: C.front,  path: P("M348 372 C374 320 450 314 500 346 C550 314 626 320 652 372 C670 472 602 568 500 575 C398 568 330 472 348 372 Z") },
+    { kind: "stem",  colors: C.green,  path: P("M500 572 C498 690 490 820 478 980"), stroke: 34 },
+    { kind: "leaf",  colors: C.green,  path: P("M494 762 C430 668 338 638 232 658 C292 762 400 802 494 762 Z"),
+      vein: P("M494 762 Q376 704 250 662") },
+    { kind: "leaf",  colors: C.green,  path: P("M490 838 C552 752 642 726 756 744 C692 842 585 878 490 838 Z"),
+      vein: P("M490 838 Q616 784 740 748") },
+  ];
+
+  // Pinta cada região com uma "cor de etiqueta" numa tela escondida.
+  // Depois basta olhar a cor de um pixel para saber em qual pétala ele está.
+  const lab = document.createElement("canvas");
+  lab.width = W; lab.height = H;
+  const lc = lab.getContext("2d", { willReadFrequently: true });
+  lc.fillStyle = "#000"; lc.fillRect(0, 0, W, H);
+  REGIONS.forEach((R, i) => {
+    const id = i + 1, col = `rgb(${id * 20},0,0)`;
+    lc.lineCap = "round"; lc.lineJoin = "round";
+    if (R.stroke) { lc.strokeStyle = col; lc.lineWidth = R.stroke; lc.stroke(R.path); return; }
+    lc.fillStyle = col; lc.fill(R.path);
+    lc.strokeStyle = "#000"; lc.lineWidth = 9; lc.stroke(R.path);      // vão entre pétalas
+    if (R.vein) { lc.lineWidth = 6; lc.stroke(R.vein); }                // nervura da folha
+  });
+  const px = lc.getImageData(0, 0, W, H).data;
+  const labels = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const r = px[i * 4];
+    if (r && px[i * 4 + 1] === 0 && px[i * 4 + 2] === 0 && r % 20 === 0 && r / 20 <= REGIONS.length) labels[i] = r / 20;
+  }
+  const labelAt = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : labels[(y | 0) * W + (x | 0)];
+
+  // A palavra inteira cai dentro de UMA região só? Devolve qual (ou 0).
+  function regionOf(x, y, w, h) {
+    const n = Math.max(2, Math.ceil(w / 6));
+    let found = 0;
+    for (const yy of [y, y + h / 2, y + h]) {
+      for (let k = 0; k <= n; k++) {
+        const v = labelAt(x + (w * k) / n, yy);
+        if (!v || (found && v !== found)) return 0;
+        found = v;
+      }
+    }
+    return found;
+  }
+
+  // ---------------- Mapa de ocupação ----------------
+  const COLS = W / GRID, ROWS = H / GRID;
+  const occ = new Uint8Array(COLS * ROWS);
+  function cells(x, y, w, h, pad) {
+    return [
+      Math.max(0, Math.floor((x - pad) / GRID)), Math.min(COLS - 1, Math.floor((x + w + pad) / GRID)),
+      Math.max(0, Math.floor((y - pad) / GRID)), Math.min(ROWS - 1, Math.floor((y + h + pad) / GRID)),
+    ];
+  }
+  function isFree(x, y, w, h) {
+    const [c0, c1, r0, r1] = cells(x, y, w, h, GAP);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (occ[r * COLS + c]) return false;
+    return true;
+  }
+  function occupy(x, y, w, h) {
+    const [c0, c1, r0, r1] = cells(x, y, w, h, 0);
+    for (let r = r0; r <= r1; r++) occ.fill(1, r * COLS + c0, r * COLS + c1 + 1);
+  }
+
+  // ---------------- Montagem ----------------
+  const widths = new Map();
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const choice = (arr) => arr[(Math.random() * arr.length) | 0];
+
+  function pick(pool, size) {
+    let text = choice(pool);
+    if (Math.random() < 0.35) text = text.toUpperCase();
+    const bold = size >= 15 && Math.random() < 0.6;
+    const font = `${bold ? 700 : 400} ${size}px ${FONT}`;
+    const key = font + "|" + text;
+    if (!widths.has(key)) { lc.font = font; widths.set(key, lc.measureText(text).width); }
+    return { text, font, size, w: widths.get(key), h: size * 0.95 };
+  }
+
+  function layout() {
+    occ.fill(0);
+    const items = [];
+    const place = (wd, x, y, need) => {
+      const id = regionOf(x, y, wd.w, wd.h);
+      if (!id || (need && id !== need) || !isFree(x, y, wd.w, wd.h)) return false;
+      occupy(x, y, wd.w, wd.h);
+      items.push({ ...wd, x, y, color: choice(REGIONS[id - 1].colors) });
+      return true;
+    };
+
+    // 1) Destaques: poucas palavras grandes, só nas pétalas
+    for (const [size, amount] of [[30, 2], [26, 4], [22, 7], [18, 12], [15, 16]]) {
+      let n = 0;
+      for (let t = 0; t < amount * 300 && n < amount; t++) {
+        const wd = pick(LOVE, size);
+        const x = rnd(190, 810 - wd.w), y = rnd(95, 580 - wd.h);
+        const id = labelAt(x + wd.w / 2, y + wd.h / 2);
+        if (id && REGIONS[id - 1].kind === "petal" && place(wd, x, y, id)) n++;
+      }
+    }
+
+    // 2) Preenchimento: varre linha por linha, como escrever num caderno
+    for (const size of [13, 12, 11, 10, 9, 8, 7]) {
+      const step = Math.max(2, Math.floor(size / 3));
+      for (let y = 90; y < 990; y += step) {
+        let x = 180;
+        while (x < 820) {
+          const id = labelAt(x + 3, y + size / 2);
+          if (!id) { x += 4; continue; }
+          const kind = REGIONS[id - 1].kind;
+          const pools = kind === "stem" ? [STEM, STEM, STEM, STEM]
+                      : [FILL, FILL, FILL, FILL, MID, MID, MID];
+          let ok = false;
+          for (const pool of pools) {
+            const wd = pick(pool, size);
+            if (place(wd, x, y, id)) { x += wd.w + GAP + rnd(0, 3); ok = true; break; }
+          }
+          if (!ok) x += 4;
+        }
+      }
+    }
+
+    // de baixo para cima, com um pouco de bagunça: parece que a rosa cresce
+    items.forEach((it) => (it.order = -(it.y + rnd(-50, 50))));
+    items.sort((a, b) => a.order - b.order);
+    const span = DURATION - ANIM;
+    items.forEach((it, i) => (it.start = (i / items.length) * span));
+    return items;
+  }
+
+  // ---------------- Desenho e animação ----------------
+  const cv = document.getElementById("rose");
+  const ctx = cv.getContext("2d");
+  const layer = document.createElement("canvas");      // guarda as palavras já prontas
+  const lctx = layer.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let items = [], done = [], active = [], next = 0, t0 = 0, raf = 0, scale = 1;
+
+  function setView(c) { c.setTransform(scale, 0, 0, scale, -VIEW.x * scale, -VIEW.y * scale); }
+
+  function drawWord(c, it, alpha, dy) {
+    c.globalAlpha = alpha;
+    c.font = it.font;
+    c.fillStyle = it.color;
+    c.shadowColor = it.color + "55";
+    c.shadowBlur = 7 * scale;
+    c.fillText(it.text, it.x, it.y + it.size * 0.8 + dy);
+  }
+
+  function resize() {
+    const st = document.getElementById("stage");
+    const k = Math.min(st.clientWidth / VIEW.w, st.clientHeight / VIEW.h);
+    const cssW = Math.floor(VIEW.w * k), cssH = Math.floor(VIEW.h * k);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.style.width = cssW + "px"; cv.style.height = cssH + "px";
+    cv.width = layer.width = Math.round(cssW * dpr);
+    cv.height = layer.height = Math.round(cssH * dpr);
+    scale = k * dpr;
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.clearRect(0, 0, layer.width, layer.height);
+    setView(lctx);
+    done.forEach((it) => drawWord(lctx, it, 1, 0));
+    if (!raf) paint(performance.now());
+  }
+
+  function paint(now) {
+    const t = now - t0;
+    while (next < items.length && items[next].start <= t) active.push(items[next++]);
+
+    const moving = [];
+    for (const it of active) {
+      if (t - it.start >= ANIM) { done.push(it); drawWord(lctx, it, 1, 0); }
+      else moving.push(it);
+    }
+    active = moving;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(layer, 0, 0);
+    setView(ctx);
+    for (const it of active) {
+      const p = Math.min(1, (t - it.start) / ANIM);
+      const e = 1 - Math.pow(1 - p, 3);                 // começa rápido e freia no fim
+      drawWord(ctx, it, e, LIFT * (1 - e));
+    }
+  }
+
+  function loop(now) {
+    paint(now);
+    raf = (next < items.length || active.length) ? requestAnimationFrame(loop) : 0;
+  }
+
+  function start() {
+    cancelAnimationFrame(raf); raf = 0;
+    items = layout(); done = []; active = []; next = 0;
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.clearRect(0, 0, layer.width, layer.height);
+    setView(lctx);
+    if (reduce) { items.forEach((it) => (it.start = 0)); t0 = performance.now() - ANIM - 1; paint(performance.now()); return; }
+    t0 = performance.now();
+    raf = requestAnimationFrame(loop);
+  }
+
+  cv.addEventListener("click", start);
+  cv.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); start(); } });
+  window.addEventListener("resize", resize);
+  resize();
+  start();
+})();
+</script>
+
+</body></html>
